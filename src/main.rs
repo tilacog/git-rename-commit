@@ -8,7 +8,7 @@ use std::process;
 #[derive(Parser)]
 #[command(about = "Rename a git commit message using a sed-style substitution")]
 struct Cli {
-    /// Commit hash (full or abbreviated)
+    /// Commit hash (full or abbreviated), or a revision range (A..B)
     #[arg(required_unless_present = "n")]
     commit: Option<String>,
 
@@ -92,12 +92,7 @@ fn apply_sed(sed: &SedExpr, input: &str) -> String {
     }
 }
 
-fn main() -> Result<()> {
-    let cli = Cli::parse();
-    let sed = parse_sed_expression(&cli.e)?;
-
-    let repo = Repository::discover(".").context("not a git repository")?;
-
+fn resolve_targets(repo: &Repository, cli: &Cli) -> Result<(Vec<Oid>, HashSet<Oid>)> {
     let mut revwalk = repo.revwalk()?;
     revwalk.push_head()?;
     revwalk.set_sorting(Sort::TOPOLOGICAL)?;
@@ -117,26 +112,121 @@ fn main() -> Result<()> {
                 break;
             }
         }
-    } else if let Some(ref commit) = cli.commit {
-        let target_oid = repo
-            .revparse_single(commit)
-            .with_context(|| format!("could not resolve '{commit}'"))?
-            .id();
+    } else if let Some(ref commit_arg) = cli.commit {
+        if let Some((from_str, to_str)) = commit_arg.split_once("..") {
+            resolve_range(
+                repo,
+                commit_arg,
+                from_str,
+                to_str,
+                revwalk,
+                &mut commit_chain,
+                &mut target_set,
+            )?;
+        } else {
+            resolve_single(
+                repo,
+                commit_arg,
+                revwalk,
+                &mut commit_chain,
+                &mut target_set,
+            )?;
+        }
+    }
 
-        for oid_result in revwalk {
-            let oid = oid_result?;
-            commit_chain.push(oid);
-            if oid == target_oid {
+    Ok((commit_chain, target_set))
+}
+
+fn resolve_range(
+    repo: &Repository,
+    commit_arg: &str,
+    from_str: &str,
+    to_str: &str,
+    revwalk: git2::Revwalk<'_>,
+    commit_chain: &mut Vec<Oid>,
+    target_set: &mut HashSet<Oid>,
+) -> Result<()> {
+    if from_str.is_empty() || to_str.is_empty() {
+        bail!("both sides of the range must be specified: '{commit_arg}'");
+    }
+
+    let from_oid = repo
+        .revparse_single(from_str)
+        .with_context(|| format!("could not resolve '{from_str}'"))?
+        .id();
+    let to_oid = repo
+        .revparse_single(to_str)
+        .with_context(|| format!("could not resolve '{to_str}'"))?
+        .id();
+
+    // Determine target set: commits reachable from `to` but not from `from`
+    let mut range_walk = repo.revwalk()?;
+    range_walk.push(to_oid)?;
+    range_walk.hide(from_oid)?;
+    range_walk.set_sorting(Sort::TOPOLOGICAL)?;
+
+    for oid_result in range_walk {
+        target_set.insert(oid_result?);
+    }
+
+    if target_set.is_empty() {
+        bail!("no commits in range '{commit_arg}'");
+    }
+
+    // Build commit chain from HEAD down to the oldest target
+    let mut remaining = target_set.len();
+    for oid_result in revwalk {
+        let oid = oid_result?;
+        commit_chain.push(oid);
+        if target_set.contains(&oid) {
+            remaining -= 1;
+            if remaining == 0 {
                 break;
             }
         }
-
-        if commit_chain.last() != Some(&target_oid) {
-            bail!("commit {commit} is not an ancestor of HEAD");
-        }
-
-        target_set.insert(target_oid);
     }
+
+    if remaining > 0 {
+        bail!("some commits in range '{commit_arg}' are not ancestors of HEAD");
+    }
+
+    Ok(())
+}
+
+fn resolve_single(
+    repo: &Repository,
+    commit_arg: &str,
+    revwalk: git2::Revwalk<'_>,
+    commit_chain: &mut Vec<Oid>,
+    target_set: &mut HashSet<Oid>,
+) -> Result<()> {
+    let target_oid = repo
+        .revparse_single(commit_arg)
+        .with_context(|| format!("could not resolve '{commit_arg}'"))?
+        .id();
+
+    for oid_result in revwalk {
+        let oid = oid_result?;
+        commit_chain.push(oid);
+        if oid == target_oid {
+            break;
+        }
+    }
+
+    if commit_chain.last() != Some(&target_oid) {
+        bail!("commit {commit_arg} is not an ancestor of HEAD");
+    }
+
+    target_set.insert(target_oid);
+    Ok(())
+}
+
+fn main() -> Result<()> {
+    let cli = Cli::parse();
+    let sed = parse_sed_expression(&cli.e)?;
+
+    let repo = Repository::discover(".").context("not a git repository")?;
+    let (mut commit_chain, target_set) = resolve_targets(&repo, &cli)?;
 
     let total_in_range = target_set.len();
 

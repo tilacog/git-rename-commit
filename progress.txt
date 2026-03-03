@@ -7,3 +7,13 @@ US-001: Add -n flag and refactor core to support multiple target commits — DON
 - Updated no-match message to "pattern did not match any commit message in the range."
 - Added summary line "Rewrote N of M commits." on success
 - All 5 existing tests pass, just ci passes
+
+US-002: Add revision range (A..B) syntax support — DONE
+- Detect ".." in positional commit arg, split into from/to endpoints
+- Resolve range using git2 revwalk with push(to)/hide(from) for standard git range semantics
+- from is excluded, to is included
+- Build commit chain from HEAD down to the oldest target in the range
+- Validate both sides of range are non-empty, range is non-empty, and all targets are ancestors of HEAD
+- Refactored main into resolve_targets/resolve_range/resolve_single helpers to satisfy clippy::too_many_lines
+- Mutual exclusivity with -n handled by existing clap conflicts_with on the positional arg
+- All 5 existing tests pass, just ci passes
