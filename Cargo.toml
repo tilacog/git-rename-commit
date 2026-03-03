@@ -1,0 +1,19 @@
+[package]
+name = "git-rename-commit"
+version = "0.1.0"
+edition = "2021"
+description = "Rewrite a git commit message using a sed-style substitution"
+authors = ["Tiago Guimarães <tilacog@gmail.com>"]
+
+[[bin]]
+name = "git-rename-commit"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+git2 = "0.19"
+regex = "1"
+
+[dev-dependencies]
+tempfile = "3"
