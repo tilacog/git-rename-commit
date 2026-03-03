@@ -1,0 +1,9 @@
+US-001: Add -n flag and refactor core to support multiple target commits — DONE
+- Made `commit` positional arg optional (required_unless_present = "n")
+- Added `-n` / `--last` flag with conflicts_with = "commit"
+- Refactored rewrite loop to use HashSet<Oid> target set instead of single OID comparison
+- For -n mode: collects last N commits from HEAD, all become targets
+- For single-commit mode: walks HEAD to target, only target is in target set
+- Updated no-match message to "pattern did not match any commit message in the range."
+- Added summary line "Rewrote N of M commits." on success
+- All 5 existing tests pass, just ci passes

@@ -2,18 +2,23 @@ use anyhow::{bail, Context, Result};
 use clap::Parser;
 use git2::{Oid, Repository, Sort};
 use regex::{Regex, RegexBuilder};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::process;
 
 #[derive(Parser)]
 #[command(about = "Rename a git commit message using a sed-style substitution")]
 struct Cli {
     /// Commit hash (full or abbreviated)
-    commit: String,
+    #[arg(required_unless_present = "n")]
+    commit: Option<String>,
 
     /// Sed-style substitution, e.g. 's/foo/bar/g'
     #[arg(short, long = "expression")]
     e: String,
+
+    /// Apply to the last N commits from HEAD
+    #[arg(short, long = "last", conflicts_with = "commit")]
+    n: Option<usize>,
 }
 
 struct SedExpr {
@@ -92,44 +97,63 @@ fn main() -> Result<()> {
     let sed = parse_sed_expression(&cli.e)?;
 
     let repo = Repository::discover(".").context("not a git repository")?;
-    let target_oid = repo
-        .revparse_single(&cli.commit)
-        .with_context(|| format!("could not resolve '{}'", cli.commit))?
-        .id();
 
-    // Collect commits from HEAD down to (and including) the target
     let mut revwalk = repo.revwalk()?;
     revwalk.push_head()?;
     revwalk.set_sorting(Sort::TOPOLOGICAL)?;
 
     let mut commit_chain: Vec<Oid> = Vec::new();
-    for oid_result in revwalk {
-        let oid = oid_result?;
-        commit_chain.push(oid);
-        if oid == target_oid {
-            break;
+    let mut target_set: HashSet<Oid> = HashSet::new();
+
+    if let Some(n) = cli.n {
+        if n == 0 {
+            bail!("--last must be at least 1");
         }
+        for oid_result in revwalk {
+            let oid = oid_result?;
+            commit_chain.push(oid);
+            target_set.insert(oid);
+            if commit_chain.len() == n {
+                break;
+            }
+        }
+    } else if let Some(ref commit) = cli.commit {
+        let target_oid = repo
+            .revparse_single(commit)
+            .with_context(|| format!("could not resolve '{commit}'"))?
+            .id();
+
+        for oid_result in revwalk {
+            let oid = oid_result?;
+            commit_chain.push(oid);
+            if oid == target_oid {
+                break;
+            }
+        }
+
+        if commit_chain.last() != Some(&target_oid) {
+            bail!("commit {commit} is not an ancestor of HEAD");
+        }
+
+        target_set.insert(target_oid);
     }
 
-    if commit_chain.last() != Some(&target_oid) {
-        bail!("commit {} is not an ancestor of HEAD", &cli.commit);
-    }
+    let total_in_range = target_set.len();
 
-    // Rewrite from target forward (reverse the chain)
+    // Rewrite from oldest to newest
     commit_chain.reverse();
 
     let mut oid_map: HashMap<Oid, Oid> = HashMap::new();
-    let mut matched = false;
+    let mut rewrite_count: usize = 0;
 
     for &old_oid in &commit_chain {
         let old_commit = repo.find_commit(old_oid)?;
-
         let mut message = old_commit.message().unwrap_or("").to_string();
 
-        if old_oid == target_oid {
+        if target_set.contains(&old_oid) {
             let new_message = apply_sed(&sed, &message);
             if new_message != message {
-                matched = true;
+                rewrite_count += 1;
                 eprintln!("Rewriting {}:", &old_oid.to_string()[..12]);
                 eprintln!("  - {}", message.trim_end());
                 eprintln!("  + {}", new_message.trim_end());
@@ -159,10 +183,14 @@ fn main() -> Result<()> {
         oid_map.insert(old_oid, new_oid);
     }
 
-    if !matched {
-        eprintln!("No changes made — pattern did not match the commit message.");
+    if rewrite_count == 0 {
+        eprintln!(
+            "No changes made \u{2014} pattern did not match any commit message in the range."
+        );
         process::exit(1);
     }
+
+    eprintln!("Rewrote {rewrite_count} of {total_in_range} commits.");
 
     // Update the current branch to point at the new HEAD
     let head_ref = repo.head()?;
