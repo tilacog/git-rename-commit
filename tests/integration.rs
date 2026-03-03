@@ -72,6 +72,14 @@ fn run_rename(dir: &std::path::Path, commit: &str, expr: &str) -> std::process::
         .unwrap()
 }
 
+fn run_rename_last(dir: &std::path::Path, n: &str, expr: &str) -> std::process::Output {
+    Command::new(binary_path())
+        .args(["-n", n, "-e", expr])
+        .current_dir(dir)
+        .output()
+        .unwrap()
+}
+
 #[test]
 fn global_replacement() {
     let dir = init_repo();
@@ -165,4 +173,110 @@ fn non_global_replaces_only_first() {
 
     let log = log_oneline(dir.path());
     assert_eq!(log, vec!["zzz bbb aaa"]);
+}
+
+// ----- Tests for -n / --last flag -----
+
+#[test]
+fn last_n_rewrites_all_matching() {
+    let dir = init_repo();
+    commit_empty(dir.path(), "foo first");
+    commit_empty(dir.path(), "foo second");
+    commit_empty(dir.path(), "foo third");
+
+    let out = run_rename_last(dir.path(), "3", "s/foo/bar/");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let log = log_oneline(dir.path());
+    assert_eq!(log, vec!["bar third", "bar second", "bar first"]);
+
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("Rewrote 3 of 3 commits"),
+        "unexpected stderr: {stderr}"
+    );
+}
+
+#[test]
+fn last_n_rewrites_only_matching() {
+    let dir = init_repo();
+    commit_empty(dir.path(), "foo first");
+    commit_empty(dir.path(), "no match here");
+    commit_empty(dir.path(), "foo third");
+
+    let out = run_rename_last(dir.path(), "3", "s/foo/bar/");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let log = log_oneline(dir.path());
+    assert_eq!(log, vec!["bar third", "no match here", "bar first"]);
+
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("Rewrote 2 of 3 commits"),
+        "unexpected stderr: {stderr}"
+    );
+}
+
+#[test]
+fn last_1_is_equivalent_to_head() {
+    let dir = init_repo();
+    commit_empty(dir.path(), "keep this");
+    commit_empty(dir.path(), "foo latest");
+
+    let out = run_rename_last(dir.path(), "1", "s/foo/bar/");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let log = log_oneline(dir.path());
+    assert_eq!(log, vec!["bar latest", "keep this"]);
+}
+
+#[test]
+fn last_0_produces_error() {
+    let dir = init_repo();
+    commit_empty(dir.path(), "some commit");
+
+    let out = run_rename_last(dir.path(), "0", "s/foo/bar/");
+    assert!(!out.status.success());
+}
+
+#[test]
+fn n_with_positional_commit_is_error() {
+    let dir = init_repo();
+    commit_empty(dir.path(), "some commit");
+
+    let out = Command::new(binary_path())
+        .args(["HEAD", "-n", "1", "-e", "s/foo/bar/"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+}
+
+#[test]
+fn last_n_no_match_exits_nonzero() {
+    let dir = init_repo();
+    commit_empty(dir.path(), "alpha");
+    commit_empty(dir.path(), "beta");
+    commit_empty(dir.path(), "gamma");
+
+    let out = run_rename_last(dir.path(), "3", "s/xyz/abc/");
+    assert!(!out.status.success());
+
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("No changes made"),
+        "unexpected stderr: {stderr}"
+    );
 }

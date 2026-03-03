@@ -17,3 +17,13 @@ US-002: Add revision range (A..B) syntax support — DONE
 - Refactored main into resolve_targets/resolve_range/resolve_single helpers to satisfy clippy::too_many_lines
 - Mutual exclusivity with -n handled by existing clap conflicts_with on the positional arg
 - All 5 existing tests pass, just ci passes
+
+US-003: Integration tests for -n flag — DONE
+- Added run_rename_last helper for invoking binary with -n flag
+- Test: -n 3 rewrites all 3 when all match (last_n_rewrites_all_matching)
+- Test: -n 3 rewrites only matching, leaves others unchanged (last_n_rewrites_only_matching)
+- Test: -n 1 equivalent to HEAD (last_1_is_equivalent_to_head)
+- Test: -n 0 produces error (last_0_produces_error)
+- Test: -n + positional commit is error (n_with_positional_commit_is_error)
+- Test: no match in -n range exits nonzero (last_n_no_match_exits_nonzero)
+- All 11 tests pass (5 existing + 6 new), just ci passes
