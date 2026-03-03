@@ -27,3 +27,10 @@ US-003: Integration tests for -n flag — DONE
 - Test: -n + positional commit is error (n_with_positional_commit_is_error)
 - Test: no match in -n range exits nonzero (last_n_no_match_exits_nonzero)
 - All 11 tests pass (5 existing + 6 new), just ci passes
+
+US-004: Integration tests for revision range syntax — DONE
+- Test: range A..B rewrites only commits in range, not outside (range_rewrites_only_commits_in_range)
+- Test: range no match exits nonzero with warning (range_no_match_exits_nonzero)
+- Test: -n with range is error (n_with_range_is_error)
+- Test: <from> commit excluded from range (range_excludes_from_commit)
+- All 15 tests pass (5 existing + 6 -n tests + 4 range tests), just ci passes

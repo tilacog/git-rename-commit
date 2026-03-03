@@ -280,3 +280,108 @@ fn last_n_no_match_exits_nonzero() {
         "unexpected stderr: {stderr}"
     );
 }
+
+// ----- Tests for revision range (A..B) syntax -----
+
+#[test]
+fn range_rewrites_only_commits_in_range() {
+    let dir = init_repo();
+    commit_empty(dir.path(), "foo first"); // HEAD~3
+    commit_empty(dir.path(), "foo second"); // HEAD~2
+    commit_empty(dir.path(), "foo third"); // HEAD~1
+    commit_empty(dir.path(), "foo fourth"); // HEAD
+
+    // Range: HEAD~3..HEAD~1 => includes HEAD~2 and HEAD~1, excludes HEAD~3 and HEAD
+    let from = rev_parse(dir.path(), "HEAD~3");
+    let to = rev_parse(dir.path(), "HEAD~1");
+    let range = format!("{from}..{to}");
+
+    let out = run_rename(dir.path(), &range, "s/foo/bar/");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let log = log_oneline(dir.path());
+    // HEAD and HEAD~3 should be unchanged, HEAD~1 and HEAD~2 should be rewritten
+    assert_eq!(
+        log,
+        vec!["foo fourth", "bar third", "bar second", "foo first"]
+    );
+
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("Rewrote 2 of 2 commits"),
+        "unexpected stderr: {stderr}"
+    );
+}
+
+#[test]
+fn range_no_match_exits_nonzero() {
+    let dir = init_repo();
+    commit_empty(dir.path(), "alpha");
+    commit_empty(dir.path(), "beta");
+    commit_empty(dir.path(), "gamma");
+
+    let from = rev_parse(dir.path(), "HEAD~2");
+    let to = rev_parse(dir.path(), "HEAD");
+    let range = format!("{from}..{to}");
+
+    let out = run_rename(dir.path(), &range, "s/xyz/abc/");
+    assert!(!out.status.success());
+
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("No changes made"),
+        "unexpected stderr: {stderr}"
+    );
+}
+
+#[test]
+fn n_with_range_is_error() {
+    let dir = init_repo();
+    commit_empty(dir.path(), "first");
+    commit_empty(dir.path(), "second");
+
+    let from = rev_parse(dir.path(), "HEAD~1");
+    let to = rev_parse(dir.path(), "HEAD");
+    let range = format!("{from}..{to}");
+
+    // -n and a range (passed as positional) should conflict
+    let out = Command::new(binary_path())
+        .args([&range, "-n", "1", "-e", "s/foo/bar/"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+}
+
+#[test]
+fn range_excludes_from_commit() {
+    let dir = init_repo();
+    commit_empty(dir.path(), "foo first"); // HEAD~2 (this is <from>, should be excluded)
+    commit_empty(dir.path(), "foo second"); // HEAD~1
+    commit_empty(dir.path(), "foo third"); // HEAD
+
+    // Range: HEAD~2..HEAD => includes HEAD~1 and HEAD, excludes HEAD~2
+    let from = rev_parse(dir.path(), "HEAD~2");
+    let range = format!("{from}..HEAD");
+
+    let out = run_rename(dir.path(), &range, "s/foo/bar/");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let log = log_oneline(dir.path());
+    // HEAD~2 ("foo first") should remain unchanged
+    assert_eq!(log, vec!["bar third", "bar second", "foo first"]);
+
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("Rewrote 2 of 2 commits"),
+        "unexpected stderr: {stderr}"
+    );
+}
