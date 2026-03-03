@@ -8,13 +8,12 @@ use std::process;
 #[derive(Parser)]
 #[command(about = "Rename a git commit message using a sed-style substitution")]
 struct Cli {
+    /// Sed-style substitution, e.g. 's/foo/bar/g'
+    expression: String,
+
     /// Commit hash (full or abbreviated), or a revision range (A..B)
     #[arg(required_unless_present = "n")]
     commit: Option<String>,
-
-    /// Sed-style substitution, e.g. 's/foo/bar/g'
-    #[arg(short, long = "expression")]
-    e: String,
 
     /// Apply to the last N commits from HEAD
     #[arg(short, long = "last", conflicts_with = "commit")]
@@ -229,7 +228,7 @@ fn resolve_single(
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
-    let sed = parse_sed_expression(&cli.e)?;
+    let sed = parse_sed_expression(&cli.expression)?;
 
     let repo = Repository::discover(".").context("not a git repository")?;
     let (mut commit_chain, target_set) = resolve_targets(&repo, &cli)?;

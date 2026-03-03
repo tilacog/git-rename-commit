@@ -7,9 +7,9 @@ When placed in `$PATH`, git auto-discovers it as `git rename-commit`.
 ## Usage
 
 ```
-git rename-commit <commit> -e 's/pattern/replacement/flags'
-git rename-commit <from>..<to> -e 's/pattern/replacement/flags'
-git rename-commit -n <count> -e 's/pattern/replacement/flags'
+git rename-commit 's/pattern/replacement/flags' <commit>
+git rename-commit 's/pattern/replacement/flags' <from>..<to>
+git rename-commit 's/pattern/replacement/flags' -n <count>
 ```
 
 **Sed flags:**
@@ -23,31 +23,31 @@ The delimiter after `s` can be any character (e.g. `s|foo|bar|`).
 Rename the HEAD commit:
 
 ```bash
-git rename-commit HEAD -e 's/old/new/'
+git rename-commit 's/old/new/' HEAD
 ```
 
 Case-insensitive, global replace:
 
 ```bash
-git rename-commit HEAD -e 's/hello/goodbye/gi'
+git rename-commit 's/hello/goodbye/gi' HEAD
 ```
 
 Rewrite an older commit (descendants are rebuilt automatically):
 
 ```bash
-git rename-commit abc123 -e 's/typo/fixed/'
+git rename-commit 's/typo/fixed/' abc123
 ```
 
 Rename across the last 5 commits:
 
 ```bash
-git rename-commit -n 5 -e 's/WIP/feat/'
+git rename-commit 's/WIP/feat/' -n 5
 ```
 
 Rename within a revision range (standard git `A..B` semantics — `A` excluded, `B` included):
 
 ```bash
-git rename-commit abc123..def456 -e 's/old/new/'
+git rename-commit 's/old/new/' abc123..def456
 ```
 
 Only commits whose messages actually match the pattern are rewritten. Non-matching commits keep their original message but may receive new OIDs if they are descendants of a rewritten commit.

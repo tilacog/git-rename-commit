@@ -66,7 +66,7 @@ fn rev_parse(dir: &std::path::Path, rev: &str) -> String {
 
 fn run_rename(dir: &std::path::Path, commit: &str, expr: &str) -> std::process::Output {
     Command::new(binary_path())
-        .args([commit, "-e", expr])
+        .args([expr, commit])
         .current_dir(dir)
         .output()
         .unwrap()
@@ -74,7 +74,7 @@ fn run_rename(dir: &std::path::Path, commit: &str, expr: &str) -> std::process::
 
 fn run_rename_last(dir: &std::path::Path, n: &str, expr: &str) -> std::process::Output {
     Command::new(binary_path())
-        .args(["-n", n, "-e", expr])
+        .args([expr, "-n", n])
         .current_dir(dir)
         .output()
         .unwrap()
@@ -257,7 +257,7 @@ fn n_with_positional_commit_is_error() {
     commit_empty(dir.path(), "some commit");
 
     let out = Command::new(binary_path())
-        .args(["HEAD", "-n", "1", "-e", "s/foo/bar/"])
+        .args(["s/foo/bar/", "HEAD", "-n", "1"])
         .current_dir(dir.path())
         .output()
         .unwrap();
@@ -350,7 +350,7 @@ fn n_with_range_is_error() {
 
     // -n and a range (passed as positional) should conflict
     let out = Command::new(binary_path())
-        .args([&range, "-n", "1", "-e", "s/foo/bar/"])
+        .args(["s/foo/bar/", &range, "-n", "1"])
         .current_dir(dir.path())
         .output()
         .unwrap();
