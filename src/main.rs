@@ -159,10 +159,16 @@ fn resolve_range(
         .with_context(|| format!("could not resolve '{to_str}'"))?
         .id();
 
-    // Determine target set: commits reachable from `to` but not from `from`
+    // Normalize order so the range is direction-agnostic
+    let (exclude, include) = if repo.graph_descendant_of(from_oid, to_oid)? {
+        (to_oid, from_oid)
+    } else {
+        (from_oid, to_oid)
+    };
+
     let mut range_walk = repo.revwalk()?;
-    range_walk.push(to_oid)?;
-    range_walk.hide(from_oid)?;
+    range_walk.push(include)?;
+    range_walk.hide(exclude)?;
     range_walk.set_sorting(Sort::TOPOLOGICAL)?;
 
     for oid_result in range_walk {

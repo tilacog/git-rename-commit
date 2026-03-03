@@ -358,6 +358,40 @@ fn n_with_range_is_error() {
 }
 
 #[test]
+fn range_reversed_order_works() {
+    let dir = init_repo();
+    commit_empty(dir.path(), "foo first"); // HEAD~3
+    commit_empty(dir.path(), "foo second"); // HEAD~2
+    commit_empty(dir.path(), "foo third"); // HEAD~1
+    commit_empty(dir.path(), "foo fourth"); // HEAD
+
+    // Pass the range in reversed order (newer..older instead of older..newer)
+    let from = rev_parse(dir.path(), "HEAD~3");
+    let to = rev_parse(dir.path(), "HEAD~1");
+    let range = format!("{to}..{from}");
+
+    let out = run_rename(dir.path(), &range, "s/foo/bar/");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let log = log_oneline(dir.path());
+    // Same result as normal order: HEAD~2 and HEAD~1 rewritten, HEAD~3 and HEAD unchanged
+    assert_eq!(
+        log,
+        vec!["foo fourth", "bar third", "bar second", "foo first"]
+    );
+
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("Rewrote 2 of 2 commits"),
+        "unexpected stderr: {stderr}"
+    );
+}
+
+#[test]
 fn range_excludes_from_commit() {
     let dir = init_repo();
     commit_empty(dir.path(), "foo first"); // HEAD~2 (this is <from>, should be excluded)
