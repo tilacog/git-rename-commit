@@ -96,6 +96,36 @@ fn run_rename_last_dry_run(dir: &std::path::Path, n: &str, expr: &str) -> std::p
         .unwrap()
 }
 
+fn run_rename_backup_branch(
+    dir: &std::path::Path,
+    commit: &str,
+    expr: &str,
+) -> std::process::Output {
+    Command::new(binary_path())
+        .args([expr, commit, "--backup-branch"])
+        .current_dir(dir)
+        .output()
+        .unwrap()
+}
+
+fn branch_exists(dir: &std::path::Path, branch: &str) -> bool {
+    let out = Command::new("git")
+        .args(["rev-parse", &format!("refs/heads/{}", branch)])
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    out.status.success()
+}
+
+fn get_current_branch(dir: &std::path::Path) -> String {
+    let out = Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    String::from_utf8(out.stdout).unwrap().trim().to_string()
+}
+
 #[test]
 fn global_replacement() {
     let dir = init_repo();
@@ -516,4 +546,179 @@ fn dry_run_no_match_exits_nonzero() {
         stderr.contains("No changes made"),
         "unexpected stderr: {stderr}"
     );
+}
+
+#[test]
+fn backup_creates_with_bkp_suffix() {
+    let dir = init_repo();
+    commit_empty(dir.path(), "Hello World");
+
+    let current_branch = get_current_branch(dir.path());
+    let backup_name = format!("{}-bkp", current_branch);
+
+    let out = run_rename_backup_branch(dir.path(), "HEAD", "s/Hello/Bye/");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    // Verify the backup branch was created
+    assert!(
+        branch_exists(dir.path(), &backup_name),
+        "backup branch should exist with -bkp suffix"
+    );
+
+    // Verify the main branch was updated
+    let log = log_oneline(dir.path());
+    assert_eq!(log, vec!["Bye World"]);
+}
+
+#[test]
+fn backup_preserves_original_head() {
+    let dir = init_repo();
+    commit_empty(dir.path(), "commit one");
+    commit_empty(dir.path(), "commit two");
+
+    let current_branch = get_current_branch(dir.path());
+    let backup_name = format!("{}-bkp", current_branch);
+
+    let before_head = rev_parse(dir.path(), "HEAD");
+
+    let out = run_rename_backup_branch(dir.path(), "HEAD", "s/two/TWO/");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    // Backup should point to the original HEAD
+    let backup_head = rev_parse(dir.path(), &backup_name);
+    assert_eq!(before_head, backup_head);
+
+    // Current HEAD should be different (commit was rewritten)
+    let after_head = rev_parse(dir.path(), "HEAD");
+    assert_ne!(before_head, after_head);
+}
+
+#[test]
+fn backup_double_suffix_on_bkp_branch() {
+    use std::process::Command;
+
+    let dir = init_repo();
+    commit_empty(dir.path(), "commit one");
+
+    // Create a branch that already ends with -bkp
+    let out = Command::new("git")
+        .args(["checkout", "-b", "main-bkp"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "failed to create main-bkp branch: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    commit_empty(dir.path(), "commit two");
+
+    let before_head = rev_parse(dir.path(), "HEAD");
+
+    let out = run_rename_backup_branch(dir.path(), "HEAD", "s/two/TWO/");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    // Backup branch should be created with double suffix
+    assert!(
+        branch_exists(dir.path(), "main-bkp-bkp"),
+        "backup branch should exist as main-bkp-bkp"
+    );
+
+    // Backup should point to the original HEAD
+    let backup_head = rev_parse(dir.path(), "main-bkp-bkp");
+    assert_eq!(before_head, backup_head);
+
+    // Current branch should be updated
+    let after_head = rev_parse(dir.path(), "HEAD");
+    assert_ne!(before_head, after_head);
+}
+
+#[test]
+fn backup_fails_if_target_differs() {
+    use std::process::Command;
+
+    let dir = init_repo();
+    commit_empty(dir.path(), "Hello World");
+    commit_empty(dir.path(), "Second commit");
+
+    // Pre-create the backup branch target (main-bkp) pointing to an older commit
+    let older_commit = rev_parse(dir.path(), "HEAD~1");
+    let out = Command::new("git")
+        .args(["branch", "main-bkp", &older_commit])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+
+    let before_head = rev_parse(dir.path(), "HEAD");
+    let before_log = log_oneline(dir.path());
+
+    // Try to create backup when main-bkp exists pointing to a different commit
+    let out = run_rename_backup_branch(dir.path(), "HEAD", "s/Second/SECOND/");
+
+    // Command should fail
+    assert!(
+        !out.status.success(),
+        "command should fail when backup branch target points to a different commit"
+    );
+
+    // Original commit should be unchanged
+    let after_head = rev_parse(dir.path(), "HEAD");
+    assert_eq!(before_head, after_head);
+
+    let after_log = log_oneline(dir.path());
+    assert_eq!(before_log, after_log);
+}
+
+#[test]
+fn backup_succeeds_if_target_matches() {
+    use std::process::Command;
+
+    let dir = init_repo();
+    commit_empty(dir.path(), "Hello World");
+
+    // Pre-create the backup branch pointing to the same commit as main
+    let main_oid = rev_parse(dir.path(), "main");
+    let out = Command::new("git")
+        .args(["branch", "main-bkp", &main_oid])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+
+    let before_head = rev_parse(dir.path(), "HEAD");
+    let before_bkp = rev_parse(dir.path(), "main-bkp");
+
+    // Should succeed even though main-bkp already exists (since it points to same commit)
+    let out = run_rename_backup_branch(dir.path(), "HEAD", "s/Hello/Goodbye/");
+    assert!(
+        out.status.success(),
+        "command should succeed when backup branch already points to same commit: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    // Current branch should be updated
+    let after_head = rev_parse(dir.path(), "HEAD");
+    assert_ne!(before_head, after_head);
+
+    // Backup should still point to the original commit
+    let after_bkp = rev_parse(dir.path(), "main-bkp");
+    assert_eq!(before_bkp, after_bkp);
+
+    // Verify the commit was actually rewritten
+    let log = log_oneline(dir.path());
+    assert_eq!(log, vec!["Goodbye World"]);
 }

@@ -22,6 +22,10 @@ struct Cli {
     /// Show what would be changed without modifying the repository
     #[arg(long)]
     dry_run: bool,
+
+    /// Create a backup branch before renaming (suffixed with '-bkp')
+    #[arg(long, conflicts_with = "dry_run")]
+    backup_branch: bool,
 }
 
 struct SedExpr {
@@ -230,11 +234,66 @@ fn resolve_single(
     Ok(())
 }
 
+fn create_backup_branch(repo: &Repository) -> Result<String> {
+    let head_ref = repo.head()?;
+    let head_oid = head_ref.target().context("HEAD has no target")?;
+
+    let backup_name = if head_ref.is_branch() {
+        let current_branch = head_ref
+            .name()
+            .context("could not get branch name")?
+            .strip_prefix("refs/heads/")
+            .unwrap_or("HEAD");
+        format!("refs/heads/{current_branch}-bkp")
+    } else {
+        "refs/heads/HEAD-bkp".to_string()
+    };
+
+    // Check if backup branch already exists
+    if let Ok(backup_ref) = repo.find_reference(&backup_name) {
+        // If it exists, check if it points to the same commit as HEAD
+        let backup_oid = backup_ref
+            .target()
+            .context("backup reference has no target")?;
+        if backup_oid != head_oid {
+            bail!(
+                "backup branch {} already exists and points to a different commit",
+                backup_name
+                    .strip_prefix("refs/heads/")
+                    .unwrap_or(&backup_name)
+            );
+        }
+        // If it points to the same commit, we can proceed without creating it
+        eprintln!(
+            "Backup branch {} already exists and points to current HEAD",
+            backup_name
+                .strip_prefix("refs/heads/")
+                .unwrap_or(&backup_name)
+        );
+    } else {
+        // Backup doesn't exist, create it
+        repo.reference(&backup_name, head_oid, true, "git-rename-commit backup")?;
+        eprintln!(
+            "Created backup branch: {}",
+            backup_name
+                .strip_prefix("refs/heads/")
+                .unwrap_or(&backup_name)
+        );
+    }
+
+    Ok(backup_name)
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
     let sed = parse_sed_expression(&cli.expression)?;
 
     let repo = Repository::discover(".").context("not a git repository")?;
+
+    if cli.backup_branch {
+        create_backup_branch(&repo)?;
+    }
+
     let (mut commit_chain, target_set) = resolve_targets(&repo, &cli)?;
 
     let total_in_range = target_set.len();
