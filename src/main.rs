@@ -18,6 +18,10 @@ struct Cli {
     /// Apply to the last N commits from HEAD
     #[arg(short, long = "last", conflicts_with = "commit")]
     n: Option<usize>,
+
+    /// Show what would be changed without modifying the repository
+    #[arg(long)]
+    dry_run: bool,
 }
 
 struct SedExpr {
@@ -256,26 +260,31 @@ fn main() -> Result<()> {
             }
         }
 
-        // Remap parents
-        let new_parents: Vec<git2::Commit> = old_commit
-            .parent_ids()
-            .map(|pid| {
-                let mapped = oid_map.get(&pid).copied().unwrap_or(pid);
-                repo.find_commit(mapped).unwrap()
-            })
-            .collect();
-        let parent_refs: Vec<&git2::Commit> = new_parents.iter().collect();
+        if cli.dry_run {
+            // In dry-run mode, just map old to old
+            oid_map.insert(old_oid, old_oid);
+        } else {
+            // Remap parents
+            let new_parents: Vec<git2::Commit> = old_commit
+                .parent_ids()
+                .map(|pid| {
+                    let mapped = oid_map.get(&pid).copied().unwrap_or(pid);
+                    repo.find_commit(mapped).unwrap()
+                })
+                .collect();
+            let parent_refs: Vec<&git2::Commit> = new_parents.iter().collect();
 
-        let new_oid = repo.commit(
-            None,
-            &old_commit.author(),
-            &old_commit.committer(),
-            &message,
-            &old_commit.tree()?,
-            &parent_refs,
-        )?;
+            let new_oid = repo.commit(
+                None,
+                &old_commit.author(),
+                &old_commit.committer(),
+                &message,
+                &old_commit.tree()?,
+                &parent_refs,
+            )?;
 
-        oid_map.insert(old_oid, new_oid);
+            oid_map.insert(old_oid, new_oid);
+        }
     }
 
     if rewrite_count == 0 {
@@ -285,17 +294,21 @@ fn main() -> Result<()> {
         process::exit(1);
     }
 
-    eprintln!("Rewrote {rewrite_count} of {total_in_range} commits.");
-
-    // Update the current branch to point at the new HEAD
-    let head_ref = repo.head()?;
-    let new_head = oid_map[commit_chain.last().unwrap()];
-
-    if head_ref.is_branch() {
-        let branch_name = head_ref.name().unwrap();
-        repo.reference(branch_name, new_head, true, "git-rename-commit")?;
+    if cli.dry_run {
+        eprintln!("[DRY RUN] Would rewrite {rewrite_count} of {total_in_range} commits.");
     } else {
-        repo.set_head_detached(new_head)?;
+        eprintln!("Rewrote {rewrite_count} of {total_in_range} commits.");
+
+        // Update the current branch to point at the new HEAD
+        let head_ref = repo.head()?;
+        let new_head = oid_map[commit_chain.last().unwrap()];
+
+        if head_ref.is_branch() {
+            let branch_name = head_ref.name().unwrap();
+            repo.reference(branch_name, new_head, true, "git-rename-commit")?;
+        } else {
+            repo.set_head_detached(new_head)?;
+        }
     }
 
     Ok(())

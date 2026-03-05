@@ -80,6 +80,22 @@ fn run_rename_last(dir: &std::path::Path, n: &str, expr: &str) -> std::process::
         .unwrap()
 }
 
+fn run_rename_dry_run(dir: &std::path::Path, commit: &str, expr: &str) -> std::process::Output {
+    Command::new(binary_path())
+        .args([expr, commit, "--dry-run"])
+        .current_dir(dir)
+        .output()
+        .unwrap()
+}
+
+fn run_rename_last_dry_run(dir: &std::path::Path, n: &str, expr: &str) -> std::process::Output {
+    Command::new(binary_path())
+        .args([expr, "-n", n, "--dry-run"])
+        .current_dir(dir)
+        .output()
+        .unwrap()
+}
+
 #[test]
 fn global_replacement() {
     let dir = init_repo();
@@ -416,6 +432,88 @@ fn range_excludes_from_commit() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         stderr.contains("Rewrote 2 of 2 commits"),
+        "unexpected stderr: {stderr}"
+    );
+}
+
+// ----- Tests for --dry-run flag -----
+
+#[test]
+fn dry_run_shows_changes_but_doesnt_apply() {
+    let dir = init_repo();
+    commit_empty(dir.path(), "foo commit");
+
+    let before = log_oneline(dir.path());
+    let before_head = rev_parse(dir.path(), "HEAD");
+
+    let out = run_rename_dry_run(dir.path(), "HEAD", "s/foo/bar/");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("[DRY RUN]"),
+        "expected dry-run message, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("Would rewrite 1 of 1 commits"),
+        "expected would rewrite message, got: {stderr}"
+    );
+
+    // Verify the message was NOT actually changed
+    let after = log_oneline(dir.path());
+    assert_eq!(before, after, "log should be unchanged");
+
+    let after_head = rev_parse(dir.path(), "HEAD");
+    assert_eq!(
+        before_head, after_head,
+        "HEAD should not have moved in dry-run"
+    );
+}
+
+#[test]
+fn dry_run_with_last_flag() {
+    let dir = init_repo();
+    commit_empty(dir.path(), "foo first");
+    commit_empty(dir.path(), "foo second");
+
+    let before = log_oneline(dir.path());
+    let before_head = rev_parse(dir.path(), "HEAD");
+
+    let out = run_rename_last_dry_run(dir.path(), "2", "s/foo/bar/");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("[DRY RUN]"),
+        "expected dry-run message, got: {stderr}"
+    );
+
+    let after = log_oneline(dir.path());
+    assert_eq!(before, after, "log should be unchanged");
+
+    let after_head = rev_parse(dir.path(), "HEAD");
+    assert_eq!(before_head, after_head, "HEAD should not have moved");
+}
+
+#[test]
+fn dry_run_no_match_exits_nonzero() {
+    let dir = init_repo();
+    commit_empty(dir.path(), "no match");
+
+    let out = run_rename_dry_run(dir.path(), "HEAD", "s/xyz/abc/");
+    assert!(!out.status.success());
+
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("No changes made"),
         "unexpected stderr: {stderr}"
     );
 }
